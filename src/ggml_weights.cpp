@@ -20,6 +20,9 @@
 #if defined(KIMODO_HAVE_GGML_VULKAN)
 #include <ggml-vulkan.h>
 #endif
+#if defined(KIMODO_HAVE_GGML_CUDA)
+#include <ggml-cuda.h>
+#endif
 
 namespace kimodo::detail {
 namespace {
@@ -73,15 +76,22 @@ std::expected<std::unique_ptr<ggml_motion_weights>, std::string> ggml_motion_wei
     if (!result->gguf_ || !result->context_) return std::unexpected("GGML could not load checked motion GGUF");
     // Vulkan is the normal inference path.  Keep the CPU backend as a
     // portability fallback, including for CI systems without a Vulkan ICD.
+#if defined(KIMODO_HAVE_GGML_CUDA)
+    {
+        const char *value = std::getenv("KIMODO_BACKEND");
+        if ((!value || std::string_view(value) == "cuda") && ggml_backend_cuda_get_device_count() > 0)
+            result->backend_ = ggml_backend_cuda_init(0);
+    }
+#endif
 #if defined(KIMODO_HAVE_GGML_VULKAN)
     // Retain a deterministic CPU escape hatch for parity triage.  It is not
     // a performance mode; a captured fixture can establish whether a drift
     // belongs to the GGML graph or specifically to Vulkan.
     const bool force_cpu = [] {
         const char *value = std::getenv("KIMODO_BACKEND");
-        return value && std::string_view(value) == "cpu";
+        return value && (std::string_view(value) == "cpu" || std::string_view(value) == "cuda");
     }();
-    if (!force_cpu) {
+    if (!result->backend_ && !force_cpu) {
         configure_vulkan_f32_parity();
         if (ggml_backend_vk_get_device_count() > 0) result->backend_ = ggml_backend_vk_init(0);
     }

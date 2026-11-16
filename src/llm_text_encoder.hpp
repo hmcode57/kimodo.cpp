@@ -17,6 +17,8 @@ public:
     // impose a VRAM-safe cap.
     static std::expected<std::unique_ptr<llm_text_encoder>, std::string> load(std::string_view source);
     std::expected<std::array<float, 4096>, std::string> encode(std::string_view utf8_prompt) const;
+    // GGML backend name, e.g. "CUDA0", "Vulkan0" or "CPU".
+    std::string backend_name() const;
     ~llm_text_encoder();
     llm_text_encoder(const llm_text_encoder &) = delete;
     llm_text_encoder &operator=(const llm_text_encoder &) = delete;

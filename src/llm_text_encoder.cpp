@@ -10,6 +10,9 @@
 #include <ggml-backend.h>
 #include <ggml-cpu.h>
 #include <ggml-vulkan.h>
+#if defined(KIMODO_HAVE_GGML_CUDA)
+#include <ggml-cuda.h>
+#endif
 #include <gguf.h>
 
 #include <algorithm>
@@ -39,7 +42,14 @@ constexpr int64_t hidden = 4096, heads = 32, kv_heads = 8, head_dim = 128;
 
 bool use_vulkan() {
     const char *choice = std::getenv("KIMODO_BACKEND");
-    return !choice || std::string_view(choice) != "cpu";
+    return !choice || (std::string_view(choice) != "cpu" && std::string_view(choice) != "cuda");
+}
+
+// KIMODO_BACKEND: unset = first available GPU backend (CUDA, then Vulkan),
+// "cuda" / "vulkan" = only that one, "cpu" = CPU.
+[[maybe_unused]] bool use_cuda() {
+    const char *choice = std::getenv("KIMODO_BACKEND");
+    return !choice || std::string_view(choice) == "cuda";
 }
 
 int layer_chunk_size() {
@@ -465,8 +475,12 @@ std::expected<std::unique_ptr<llm_text_encoder>, std::string> llm_text_encoder::
     }
     auto result = std::unique_ptr<llm_text_encoder>(new llm_text_encoder);
     result->impl_ = std::make_unique<impl>();
+#if defined(KIMODO_HAVE_GGML_CUDA)
+    if (use_cuda() && ggml_backend_cuda_get_device_count() > 0) result->impl_->backend = ggml_backend_cuda_init(0);
+#endif
 #if defined(KIMODO_HAVE_GGML_VULKAN)
-    if (use_vulkan() && ggml_backend_vk_get_device_count()) result->impl_->backend = ggml_backend_vk_init(0);
+    if (!result->impl_->backend && use_vulkan() && ggml_backend_vk_get_device_count())
+        result->impl_->backend = ggml_backend_vk_init(0);
 #endif
     if (!result->impl_->backend) {
         result->impl_->backend = ggml_backend_cpu_init();
@@ -503,6 +517,10 @@ std::expected<std::unique_ptr<llm_text_encoder>, std::string> llm_text_encoder::
     }
     return result;
 } catch (const std::exception &error) { return std::unexpected(error.what()); }
+
+std::string llm_text_encoder::backend_name() const {
+    return impl_ && impl_->backend ? ggml_backend_name(impl_->backend) : "none";
+}
 
 std::expected<std::array<float, 4096>, std::string> llm_text_encoder::encode(std::string_view prompt) const try {
     const std::scoped_lock lock(impl_->encode_mutex);
