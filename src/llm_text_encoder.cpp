@@ -280,9 +280,12 @@ ggml_tensor *norm(ggml_context *ctx, ggml_tensor *x, ggml_tensor *weight) {
     auto *normalized = ggml_rms_norm(ctx, x->type == GGML_TYPE_F32 ? x : ggml_cast(ctx, x, GGML_TYPE_F32), 1e-5F);
     if (x->type == GGML_TYPE_BF16) {
         normalized = ggml_cast(ctx, normalized, GGML_TYPE_BF16);
-        auto *repeated = ggml_repeat(ctx, weight, normalized);
-        return ggml_cast(ctx, ggml_mul(ctx, ggml_cast(ctx, normalized, GGML_TYPE_F32),
-            ggml_cast(ctx, repeated, GGML_TYPE_F32)), GGML_TYPE_BF16);
+        // Widen the weight before repeating it: CUDA's REPEAT only implements F32/F16
+        // (GGML_ASSERT in binbcast.cu for a BF16 source). BF16 -> F32 is exact and the
+        // product was already taken in F32, so the result is unchanged on every backend.
+        auto *repeated = ggml_repeat(ctx, ggml_cast(ctx, weight, GGML_TYPE_F32), normalized);
+        return ggml_cast(ctx, ggml_mul(ctx, ggml_cast(ctx, normalized, GGML_TYPE_F32), repeated),
+            GGML_TYPE_BF16);
     }
     return ggml_mul(ctx, normalized, ggml_repeat(ctx, ggml_cast(ctx, weight, GGML_TYPE_F32), normalized));
 }
